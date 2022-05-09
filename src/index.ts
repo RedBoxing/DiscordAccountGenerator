@@ -4,7 +4,7 @@ dotenv.config();
 import { isMainThread, Worker, threadId } from 'worker_threads'
 import { HttpsProxyAgent } from 'https-proxy-agent';
 import { solveCaptcha } from './hcaptcha'
-import { randomString } from './utils'
+import { randomString, sleep } from './utils'
 
 import mariadb from 'mariadb'
 import Imap from 'imap'
@@ -199,7 +199,10 @@ if(isMainThread) {
 
         if(!data.token) {
             console.log(data);
-            throw new Error('Registration failed');
+            console.error('Registration failed ! retrying...');
+            await sleep(10000);
+            await generateAccount(username, password, proxy);
+            return;
         }
 
         console.log(`[${threadId}] Account created !`);
