@@ -173,7 +173,7 @@ if(isMainThread) {
     
     (async function main() {
         for(let i = 0; i < process.env.ACCOUNT_TO_GENERATE; i++) { 
-            await generateAccount(randomString(10), randomString(16), proxies[Math.floor(Math.random() * proxies.length)]);
+            await generateAccount(randomString(32), randomString(16), proxies[Math.floor(Math.random() * proxies.length)]);
         }
     })();
 
