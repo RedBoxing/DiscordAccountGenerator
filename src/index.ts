@@ -238,8 +238,8 @@ if(isMainThread) {
                 host: proxy.split(':')[0],
                 port: parseInt(proxy.split(':')[1]),
                 auth: {
-                    username: "nwrhgpne",
-                    password: "l6zk078hyxzw"
+                    username: proxy.split(':')[2],
+                    password: proxy.split(':')[3]
                 }
             },
             validateStatus: (status) => true
