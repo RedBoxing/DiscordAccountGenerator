@@ -91,8 +91,6 @@ if(isMainThread) {
                                         let url = '';
                                         let lines = buffer.split('\r\n');
 
-                                        fs.writeFile('./test.html', buffer, () => {})
-
                                         for(let i = lines.findIndex(l => l.startsWith("Verify Email: ")); i < lines.length; i++) {
                                             if(lines[i].length > 1) {
                                                 url += lines[i];
@@ -198,6 +196,14 @@ if(isMainThread) {
         console.log(`[${threadId}] Captcha solved !`);
     
         const res = await axios.get('https://discord.com/api/v9/experiments', {
+            proxy: {
+                host: proxy.split(':')[0],
+                port: parseInt(proxy.split(':')[1]),
+                auth: {
+                    username: proxy.split(':')[2],
+                    password: proxy.split(':')[3]
+                }
+            },
             validateStatus: s => true
         });
 
@@ -227,6 +233,14 @@ if(isMainThread) {
             headers: {
                 'X-Fingerprint': fingerprint,
                 'X-Super-Properties': 'eyJvcyI6IldpbmRvd3MiLCJicm93c2VyIjoiRmlyZWZveCIsImRldmljZSI6IiIsInN5c3RlbV9sb2NhbGUiOiJmciIsImJyb3dzZXJfdXNlcl9hZ2VudCI6Ik1vemlsbGEvNS4wIChXaW5kb3dzIE5UIDEwLjA7IFdpbjY0OyB4NjQ7IHJ2OjEwMC4wKSBHZWNrby8yMDEwMDEwMSBGaXJlZm94LzEwMC4wIiwiYnJvd3Nlcl92ZXJzaW9uIjoiMTAwLjAiLCJvc192ZXJzaW9uIjoiMTAiLCJyZWZlcnJlciI6IiIsInJlZmVycmluZ19kb21haW4iOiIiLCJyZWZlcnJlcl9jdXJyZW50IjoiIiwicmVmZXJyaW5nX2RvbWFpbl9jdXJyZW50IjoiIiwicmVsZWFzZV9jaGFubmVsIjoic3RhYmxlIiwiY2xpZW50X2J1aWxkX251bWJlciI6MTI3MTM1LCJjbGllbnRfZXZlbnRfc291cmNlIjpudWxsfQ=='
+            },
+            proxy: {
+                host: proxy.split(':')[0],
+                port: parseInt(proxy.split(':')[1]),
+                auth: {
+                    username: "nwrhgpne",
+                    password: "l6zk078hyxzw"
+                }
             },
             validateStatus: (status) => true
         })).data;
