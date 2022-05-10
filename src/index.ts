@@ -277,6 +277,7 @@ if(isMainThread) {
                  if(json[0].type === 'success') {
                      resolve(parseInt(json[0].msg[json[0].msg.length - 1]));
                  } else {
+                     console.log(json);
                      resolve(-1);
                  }
             })
