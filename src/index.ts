@@ -52,7 +52,7 @@ if(isMainThread) {
             });
         
             imap.once('ready', () => {
-                imap.openBox('INBOX', true, (err, box) => {
+                imap.openBox('INBOX', false, (err, box) => {
                     if(err) throw err;
                     imap.search(['UNSEEN'], (err, results) => {
                         if(err) throw err;
@@ -107,11 +107,6 @@ if(isMainThread) {
                                             }
                                         }).then(res => {
                                             console.log(`[${threadId}] Account ${user} verified !`);
-                                           /* msg.once('attributes', attrs => {
-                                                imap.addFlags(attrs.uid, "Seen", err => {
-                                                    if(err) throw err;
-                                                });
-                                            });*/
                                             deleteAlias(aliasIds[user]);
                                             resolve(null);
                                         }).catch(err => {
@@ -187,7 +182,9 @@ if(isMainThread) {
     
         const id = await createAlias(username);
         if(id == -1) {
-            throw new Error('Mailbox creation failed');
+            console.log("Failed to create alias ! Retrying...");
+            await generateAccount(username, password, proxy);
+            return;
         }
     
         const sitekey = "4c672d35-0701-42b2-88c3-78380b0db560";
