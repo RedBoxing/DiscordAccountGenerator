@@ -10,7 +10,7 @@ datasource db {
 
 model Account {
     id Int @id @default(autoincrement())
-    userId BigInt
+    userId BigInt @default(-1)
     username String
     email String
     password String

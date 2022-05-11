@@ -7,26 +7,28 @@ import { PrismaClient } from '@prisma/client'
 import { solveCaptcha } from './hcaptcha'
 
 import MailcowClient from 'ts-mailcow-api'
-import Imap from 'imap'
-import axios from 'axios'
-import fs from 'fs';
+import Imap from 'node-imap'
+import axios, { AxiosProxyConfig } from 'axios'
+import fs, { cp } from 'fs';
 import utf8 from 'utf8'
 import qp from 'quoted-printable'
 
 import logger from './logger'
 
-const proxies = fs.readFileSync("proxies.txt").toString().split("\n");
-
 const mailcow = new MailcowClient(process.env.MAILCOW_HOST, process.env.MAILCOW_API_KEY);
 const prisma = new PrismaClient();
 
 if(isMainThread) {
+    const proxies = fs.readFileSync("proxies.txt").toString().split("\n");
     const workers = [];
 
-    for(let i = 0; i < process.env.WORKERS; i++) {
+    for(let i = 0; i < proxies.length; i++) {
         workers.push(new Promise((resolve) => {
             const worker = new Worker('./dist/index.js', {
-                env: process.env
+                env: {
+                    ...process.env,
+                    PROXY: proxies[i]
+                }
             })
     
             worker.on('exit', (code) => {
@@ -41,135 +43,142 @@ if(isMainThread) {
 
     Promise.all(workers);
 
-    function validateMails() {
+    async function validateMails() {
         logger.info("Checking mails...")
 
-        const imap = new Imap({
-            host: 'imap.redboxing.fr',
-            port: 993,
-            tls: true,
-            user: process.env.MAILCOW_USER,
-            password: process.env.MAILCOW_PASSWORD
-        });
+        try {
+            const mails = await getMails();
+            logger.info("processing mails...");
         
-        imap.once('ready', () => {
-            imap.openBox('INBOX', false, (err, box) => {
-                if(err) throw err;
-                imap.search(['UNSEEN'], (err, results) => {
-                    if(err) throw err;
-                    let f : Imap.ImapFetch;
+            for await (const mail of mails) {
+                if(mail.header.from.includes('Discord <noreply@discord.com>')) {
+                    const user = mail.header.to[0];
 
-                    try {
-                         f = imap.fetch(results, { bodies: ['HEADER.FIELDS (FROM TO SUBJECT)', 'TEXT'], markSeen: true });
-                    } catch(err) {
-                        return;
+                    let url = '';
+                    let lines = mail.body.split('\r\n');
+
+                    for(let i = lines.findIndex(l => l.startsWith("Verify Email: ")); i < lines.length; i++) {
+                        if(lines[i].length > 1) {
+                            url += lines[i];
+                        } else {
+                            break;
+                        }
                     }
 
-                    f.on('message', msg => {
-                        let discordMail = false;
-                        let user = '';
+                    url = url.replace("Verify Email: ", "");
+                    logger.info("Verifying email for user " + user + "...");
 
-                        msg.on('body', (stream, info) => {                            
-                            let buffer = '';
-                            stream.on('data', chunk => {
-                                buffer += chunk.toString();
-                            });
-        
-                            stream.on('end', () => {
-                                if(info.which !== 'TEXT') {
-                                    const headers = Imap.parseHeader(buffer);
-                                    if(headers.from.includes('Discord <noreply@discord.com>')) {
-                                        discordMail = true;
-                                        user = headers.to[0];
-                                    }
-                                } else if(discordMail) {     
-                                    // fix 3D character apearing in the body
-                                    buffer = Buffer.from(utf8.decode(qp.decode(buffer))).toString();
-                                        
-                                    // get the url after "Verify Email: " in buffer and append next lines until the line is empty
-                                    let url = '';
-                                    let lines = buffer.split('\r\n');
+                    let res = await axios.get(url, {
+                        headers: {
+                            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:100.0) Gecko/20100101 Firefox/100.0'
+                        }
+                    });
 
-                                    for(let i = lines.findIndex(l => l.startsWith("Verify Email: ")); i < lines.length; i++) {
-                                        if(lines[i].length > 1) {
-                                            url += lines[i];
-                                        } else {
-                                            break;
-                                        }
-                                    }
+                    const token = res.request.res.responseUrl.replace('https://discord.com/verify#token=', '');
+                    const captchaKey = await solveCaptcha("f5561ba9-8f1e-40ca-9b5b-a0b3f719ef34", "discord.com");
+
+                    try {
+                        res = await axios.post('https://discord.com/api/v9/auth/verify', {
+                            captcha_key: captchaKey,
+                            token
+                        });
+                    } catch(err) {
+                        logger.error("Failed to verify account :", err);
+                        continue;
+                    }
+
+                    if(res.data.token) {
+                        logger.success("Successfully verified account " + user);
+                        await updateDatabase(user, res.data.userId);
+                        await deleteAlias(user);
+                    }
+                }
+            }      
+        } catch(err) {
+            return;
+        }
+    }
+
+    function getMails() : Promise<Array<any>> {
+        return new Promise((resolve, reject) => {
+            const mails = [];
+
+            const imap = new Imap({
+                host: 'imap.redboxing.fr',
+                port: 993,
+                tls: true,
+                user: process.env.MAILCOW_USER,
+                password: process.env.MAILCOW_PASSWORD
+            });
+            
+            imap.once('ready', () => {
+                imap.openBox('INBOX', false, (err, box) => {
+                    if(err) throw err;
+                    imap.search(['UNSEEN'], (err, results) => {
+                        if(err) throw err;
+                        let f : Imap.ImapFetch;
     
-                                    url = url.replace("Verify Email: ", "");
-                                    logger.info("Verifying email for user " + user + "...");
+                        try {
+                             f = imap.fetch(results, { bodies: ['HEADER.FIELDS (FROM TO SUBJECT)', 'TEXT'], markSeen: true });
+                        } catch(err) {
+                            reject(err);
+                            return;
+                        }
+    
+                        f.on('message', msg => {
+                            const data = {}
+    
+                            msg.on('body', (stream, info) => {                            
+                                let buffer = '';
+                                stream.on('data', chunk => {
+                                    buffer += chunk.toString();
+                                });
+            
+                                stream.on('end', () => {
+                                    if(info.which !== 'TEXT') {
+                                        data["header"] = Imap.parseHeader(buffer);
+                                        
+                                    } else {     
+                                        data["body"] = Buffer.from(utf8.decode(qp.decode(buffer))).toString();
+                                        mails.push(data);
+                                    }
+                                });
 
-                                    axios.get(url, {
-                                        headers: {
-                                            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:100.0) Gecko/20100101 Firefox/100.0'
-                                        }
-                                    }).then(async res => {
-                                        const token = res.request.res.responseUrl.replace('https://discord.com/verify#token=', '');
-                                        const proxy = proxies[Math.floor(Math.random() * proxies.length)];
-                                        const captchaKey = await solveCaptcha("f5561ba9-8f1e-40ca-9b5b-a0b3f719ef34", "discord.com", {
-                                            host: proxy.split(":")[0],
-                                            port: parseInt(proxy.split(":")[1]),
-                                            auth: {
-                                                username: proxy.split(":")[2],
-                                                password: proxy.split(":")[3]
-                                            }
-                                        });
-                                            
-                                        axios.post('https://discord.com/api/v9/auth/verify', {
-                                            captcha_key: captchaKey,
-                                            token,
-                                        }, {
-                                            proxy: {
-                                                host: proxy.split(":")[0],
-                                                port: parseInt(proxy.split(":")[1]),
-                                                auth: {
-                                                    username: proxy.split(":")[2],
-                                                    password: proxy.split(":")[3]
-                                                }
-                                            }
-                                        }).then(res => {
-                                            logger.success(`Successfully verified ${user}`);
-                                            updateDatabase(user, res.data.userId);
-                                        }).catch(err => {
-                                            logger.error(`Failed to verify account ${user} :`, err);
-                                        })
-
-                                        deleteAlias(user);
-                                    }).catch(err => {
-                                        logger.error(`[${threadId}] Failed to verify account ${user} :`, err);
-                                    });
-                                }
+                                stream.on('error', reject);
                             });
                         });
+
+                        f.on('error', reject)
+            
+                        f.once('end', () => {
+                            imap.end();
+                            resolve(mails);
+                        })
                     });
-        
-                    f.once('error', err => {
-                        console.log(err);
-                    })
-        
-                    f.once('end', () => {
-                        imap.end();
-                    })
                 });
             });
-        });
-        
-        imap.once('error', err => {
-            logger.error(err);
+            
+            imap.once('error', reject);            
+            imap.connect();
         })
-        
-        imap.connect();
     }
 } else {    
     (async function main() {
-        for(let i = 0; i < process.env.ACCOUNT_TO_GENERATE; i++) { 
-            await generateAccount(randomString(16), randomString(16), proxies[Math.floor(Math.random() * proxies.length)]);
+        for(let i = 0; i < parseInt(process.env.ACCOUNT_TO_GENERATE); i++) { 
+            const proxy = {
+                host: process.env.PROXY.split(":")[0],
+                port: parseInt(process.env.PROXY.split(':')[1]),
+                auth: {
+                    username: process.env.PROXY.split(':')[2],
+                    password: process.env.PROXY.split(':')[3]
+                }
+            }
+
+            await generateAccount(randomString(16), randomString(16), proxy);
         }
     })();
 
-    async function generateAccount(username: string, password: string, proxy: string) {
+    async function generateAccount(username: string, password: string, proxy: AxiosProxyConfig) {
         logger.info(`[${threadId}] Generating account ${username}:${password}`);
         let retry = 0;
   
@@ -191,14 +200,7 @@ if(isMainThread) {
         const captchaKey = await solveCaptcha("4c672d35-0701-42b2-88c3-78380b0db560", "discord.com");
     
         let res = await axios.get('https://discord.com/api/v9/experiments', {
-            proxy: {
-                host: proxy.split(':')[0],
-                port: parseInt(proxy.split(':')[1]),
-                auth: {
-                    username: proxy.split(':')[2],
-                    password: proxy.split(':')[3]
-                }
-            },
+            proxy,
             validateStatus: s => true
         });
 
@@ -212,14 +214,7 @@ if(isMainThread) {
                 }
 
                 res = await axios.get('https://discord.com/api/v9/experiments', {
-                    proxy: {
-                        host: proxy.split(':')[0],
-                        port: parseInt(proxy.split(':')[1]),
-                        auth: {
-                            username: proxy.split(':')[2],
-                            password: proxy.split(':')[3]
-                        }
-                    },
+                    proxy,
                     validateStatus: s => true
                 });
 
@@ -249,14 +244,7 @@ if(isMainThread) {
                 'X-Fingerprint': res.data.fingerprint,
                 'X-Super-Properties': 'eyJvcyI6IldpbmRvd3MiLCJicm93c2VyIjoiRmlyZWZveCIsImRldmljZSI6IiIsInN5c3RlbV9sb2NhbGUiOiJmciIsImJyb3dzZXJfdXNlcl9hZ2VudCI6Ik1vemlsbGEvNS4wIChXaW5kb3dzIE5UIDEwLjA7IFdpbjY0OyB4NjQ7IHJ2OjEwMC4wKSBHZWNrby8yMDEwMDEwMSBGaXJlZm94LzEwMC4wIiwiYnJvd3Nlcl92ZXJzaW9uIjoiMTAwLjAiLCJvc192ZXJzaW9uIjoiMTAiLCJyZWZlcnJlciI6IiIsInJlZmVycmluZ19kb21haW4iOiIiLCJyZWZlcnJlcl9jdXJyZW50IjoiIiwicmVmZXJyaW5nX2RvbWFpbl9jdXJyZW50IjoiIiwicmVsZWFzZV9jaGFubmVsIjoic3RhYmxlIiwiY2xpZW50X2J1aWxkX251bWJlciI6MTI3MTM1LCJjbGllbnRfZXZlbnRfc291cmNlIjpudWxsfQ=='
             },
-            proxy: {
-                host: proxy.split(':')[0],
-                port: parseInt(proxy.split(':')[1]),
-                auth: {
-                    username: proxy.split(':')[2],
-                    password: proxy.split(':')[3]
-                }
-            },
+            proxy,
             validateStatus: (status) => true
         })).data;
 
@@ -285,14 +273,7 @@ if(isMainThread) {
                         'X-Fingerprint': res.data.fingerprint,
                         'X-Super-Properties': 'eyJvcyI6IldpbmRvd3MiLCJicm93c2VyIjoiRmlyZWZveCIsImRldmljZSI6IiIsInN5c3RlbV9sb2NhbGUiOiJmciIsImJyb3dzZXJfdXNlcl9hZ2VudCI6Ik1vemlsbGEvNS4wIChXaW5kb3dzIE5UIDEwLjA7IFdpbjY0OyB4NjQ7IHJ2OjEwMC4wKSBHZWNrby8yMDEwMDEwMSBGaXJlZm94LzEwMC4wIiwiYnJvd3Nlcl92ZXJzaW9uIjoiMTAwLjAiLCJvc192ZXJzaW9uIjoiMTAiLCJyZWZlcnJlciI6IiIsInJlZmVycmluZ19kb21haW4iOiIiLCJyZWZlcnJlcl9jdXJyZW50IjoiIiwicmVmZXJyaW5nX2RvbWFpbl9jdXJyZW50IjoiIiwicmVsZWFzZV9jaGFubmVsIjoic3RhYmxlIiwiY2xpZW50X2J1aWxkX251bWJlciI6MTI3MTM1LCJjbGllbnRfZXZlbnRfc291cmNlIjpudWxsfQ=='
                     },
-                    proxy: {
-                        host: proxy.split(':')[0],
-                        port: parseInt(proxy.split(':')[1]),
-                        auth: {
-                            username: proxy.split(':')[2],
-                            password: proxy.split(':')[3]
-                        }
-                    },
+                    proxy,
                     validateStatus: (status) => true
                 })).data;
 

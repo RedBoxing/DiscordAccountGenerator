@@ -5,7 +5,7 @@ import jwt_decode from "jwt-decode"
 import fs from "fs"
 import qs from 'qs'
 
-import { rdn, tensor, mm } from "./utils"
+import { rdn, tensor, mm, fixUnicode } from "./utils"
 import logger from "./logger"
 
 const userAgents = JSON.parse(fs.readFileSync(`./useragents.json`).toString());
@@ -112,7 +112,7 @@ const getAnswersTF = async (request_image: string, tasks: Array<{ datapoint_uri:
                 if (
                     data !== undefined &&
                     data.class.toUpperCase() === request_image.toUpperCase() &&
-                    data.score > 0.1
+                    data.score > 0.5
                 ) {
                     answers[tasks[index].task_key] = "true";
                 } else {
@@ -210,11 +210,11 @@ const tryToSolve = async (userAgent: string, sitekey: string, host: string, prox
 
     // Find what the captcha is looking for user's to click
     const requestImageArray = getTasks.requester_question.en.split(" ");
-    let request_image = requestImageArray[requestImageArray.length - 1];
+    let request_image = fixUnicode(requestImageArray[requestImageArray.length - 1]);
     if (request_image === "motorbus") {
         request_image = "bus";
     } else {
-        request_image = requestImageArray[requestImageArray.length - 1];
+        request_image = fixUnicode(requestImageArray[requestImageArray.length - 1]);
     }
 
     const key = getTasks.key;

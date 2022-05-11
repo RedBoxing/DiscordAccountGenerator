@@ -1081,6 +1081,29 @@ node-fetch@2.6.7, node-fetch@^2.6.1, node-fetch@~2.6.1:
   dependencies:
     whatwg-url "^5.0.0"
 
+node-imap@^0.9.6:
+  version "0.9.6"
+  resolved "https://registry.yarnpkg.com/node-imap/-/node-imap-0.9.6.tgz#b98d87f4a99dbf5184e567cd6b0f3094014f64eb"
+  integrity sha512-pYQ2AtjQwrSvILq8EYInv3E3svrJwrTOxzW7uBGpP//AkCs/pMdO+O6KEgUlSchh/0/N0MSWs5io3xZhxJ9yLg==
+  dependencies:
+    readable-stream "^3.6.0"
+    utf7 "^1.0.2"
+
+node-mail-client@^1.3.0:
+  version "1.3.0"
+  resolved "https://registry.yarnpkg.com/node-mail-client/-/node-mail-client-1.3.0.tgz#2113ed8138c85bb0c09c0d5aa2c1034832eb8516"
+  integrity sha512-lEJsRCzNOnK+XlKalBl9yBZUt6I7p/6dVDuWfU3oZQs/Df6JVaUb3C/WJmSMtr3vBOjCt51JWCTy5NtOIwQcOw==
+  dependencies:
+    imap "^0.8.19"
+    nodemailer "^6.4.10"
+    quoted-printable "^1.0.1"
+    utf8 "^3.0.0"
+
+nodemailer@^6.4.10:
+  version "6.7.5"
+  resolved "https://registry.yarnpkg.com/nodemailer/-/nodemailer-6.7.5.tgz#b30b1566f5fa2249f7bd49ced4c58bec6b25915e"
+  integrity sha512-6VtMpwhsrixq1HDYSBBHvW0GwiWawE75dS3oal48VqRhUvKJNnKnJo2RI/bCVQubj1vgrgscMNW4DHaD6xtMCg==
+
 nopt@^5.0.0:
   version "5.0.0"
   resolved "https://registry.yarnpkg.com/nopt/-/nopt-5.0.0.tgz#530942bb58a512fccafe53fe210f13a25355dc88"
@@ -1582,7 +1605,7 @@ universalify@^2.0.0:
   resolved "https://registry.yarnpkg.com/universalify/-/universalify-2.0.0.tgz#75a4984efedc4b08975c5aeb73f530d02df25717"
   integrity sha512-hAZsKq7Yy11Zu1DE0OzWjw7nnLZmJZYTDZZyEFHZdUhV8FkH5MCfoU1XMaxXovpyW5nq5scPqq0ZDP9Zyl04oQ==
 
-utf7@>=1.0.2:
+utf7@>=1.0.2, utf7@^1.0.2:
   version "1.0.2"
   resolved "https://registry.yarnpkg.com/utf7/-/utf7-1.0.2.tgz#955f490aae653ba220b9456a0a8776c199360991"
   integrity sha1-lV9JCq5lO6IguUVqCod2wZk2CZE=
