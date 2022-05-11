@@ -1,12 +1,12 @@
 import puppeteer from "puppeteer-extra"
 import pluginStealth from "puppeteer-extra-plugin-stealth"
-import axios from 'axios'
+import axios, { AxiosProxyConfig } from 'axios'
 import jwt_decode from "jwt-decode"
 import fs from "fs"
 import qs from 'qs'
 
-import { HttpsProxyAgent } from 'https-proxy-agent'
 import { rdn, tensor, mm } from "./utils"
+import logger from "./logger"
 
 const userAgents = JSON.parse(fs.readFileSync(`./useragents.json`).toString());
 
@@ -112,7 +112,7 @@ const getAnswersTF = async (request_image: string, tasks: Array<{ datapoint_uri:
                 if (
                     data !== undefined &&
                     data.class.toUpperCase() === request_image.toUpperCase() &&
-                    data.score > 0.5
+                    data.score > 0.1
                 ) {
                     answers[tasks[index].task_key] = "true";
                 } else {
@@ -121,7 +121,7 @@ const getAnswersTF = async (request_image: string, tasks: Array<{ datapoint_uri:
             });
         });
     } catch (err) {
-        console.log(err);
+        logger.error("Error getting answers :", err);
     }
     return answers;
 };
@@ -133,7 +133,7 @@ const getAnswersTF = async (request_image: string, tasks: Array<{ datapoint_uri:
  * @param {string} host
  * @returns hCaptcha solved token
  */
-const tryToSolve = async (userAgent: string, sitekey: string, host: string, agent?: HttpsProxyAgent) => {
+const tryToSolve = async (userAgent: string, sitekey: string, host: string, proxy?: AxiosProxyConfig) => {
     // Create headers
     let headers = {
         Authority: "hcaptcha.com",
@@ -151,7 +151,7 @@ const tryToSolve = async (userAgent: string, sitekey: string, host: string, agen
     let response = (await axios(`https://hcaptcha.com/checksiteconfig?host=${host}&sitekey=${sitekey}&sc=1&swa=1`, {
         method: "POST",
         headers,
-        httpsAgent: agent,
+        proxy,
         validateStatus: () => true
     })).data;
 
@@ -159,7 +159,7 @@ const tryToSolve = async (userAgent: string, sitekey: string, host: string, agen
 
     // Check for HSJ
     if (response.c != undefined && response.c.type === "hsj") {
-        console.error("Wrong Challenge Type. Retrying.");
+        logger.error("Wrong Challenge Type. Retrying.");
         return null;
     }
 
@@ -200,7 +200,7 @@ const tryToSolve = async (userAgent: string, sitekey: string, host: string, agen
         method: "POST",
         headers,
         data: qs.stringify(form),
-        httpsAgent: agent,
+        proxy,
         validateStatus: () => true
     })).data;
 
@@ -233,7 +233,7 @@ const tryToSolve = async (userAgent: string, sitekey: string, host: string, agen
     response = (await axios(`https://hcaptcha.com/checksiteconfig?host=${host}&sitekey=${sitekey}&sc=1&swa=1`, {
         method: "POST",
         headers,
-        httpsAgent: agent,
+        proxy,
         validateStatus: () => true
     })).data;
 
@@ -292,7 +292,7 @@ const tryToSolve = async (userAgent: string, sitekey: string, host: string, agen
         method: "POST",
         headers,
         data: captchaResponse,
-        httpsAgent: agent,
+        proxy,
         validateStatus: () => true
     })).data;
 
@@ -300,7 +300,7 @@ const tryToSolve = async (userAgent: string, sitekey: string, host: string, agen
         return checkAnswers.generated_pass_UUID;
     }
 
-    console.error("Wrong Response. Retrying.");
+    logger.error("Wrong Response. Retrying.");
     return null;
 };
 
@@ -310,7 +310,7 @@ const tryToSolve = async (userAgent: string, sitekey: string, host: string, agen
  * @param {string} host
  * @returns hCaptcha solved token
  */
-export const solveCaptcha = async (siteKey : string, host : string, agent?: HttpsProxyAgent) => {
+export const solveCaptcha = async (siteKey : string, host : string, proxy?: AxiosProxyConfig) => {
     try {
         while (true) {
             // Get random index for random user agent
@@ -323,17 +323,17 @@ export const solveCaptcha = async (siteKey : string, host : string, agent?: Http
                 userAgents[randomIndex].useragent,
                 siteKey,
                 host,
-                agent
+                proxy
             );
-            if (result && result != undefined) {
+            if (result && result != null) {
                 return result;
             }
         }
     } catch (e) {
-        console.log(e);
+        logger.error("Error solving captcha :", e);
         if (e.statusCode === 429) {
             // Reached rate limit, wait 30 sec
-            console.log("Rate limited. Waiting 30 seconds.");
+            logger.info("Rate limited. Waiting 30 seconds.");
             await new Promise((r) => setTimeout(r, 30000));
         }
     }
