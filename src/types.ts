@@ -9,7 +9,7 @@ declare global {
         MAILCOW_API_KEY: string;
 
         ACCOUNT_TO_GENERATE: string;
-        PROXY: string
+        WORKERS: number
       }
     }
   }export {};

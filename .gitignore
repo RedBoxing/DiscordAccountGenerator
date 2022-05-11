@@ -132,3 +132,5 @@ dist
 build/
 yarn.lock
 yarn.lock
+prisma/migrations
+binding.gyp

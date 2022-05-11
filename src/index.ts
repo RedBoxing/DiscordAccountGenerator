@@ -1,7 +1,7 @@
 import * as dotenv from 'dotenv'
 dotenv.config();
 
-import { isMainThread, Worker, threadId, parentPort } from 'worker_threads'
+import { isMainThread, Worker, threadId } from 'worker_threads'
 import { randomString, sleep } from './utils'
 import { PrismaClient } from '@prisma/client'
 import { solveCaptcha } from './hcaptcha'
@@ -9,26 +9,24 @@ import { solveCaptcha } from './hcaptcha'
 import MailcowClient from 'ts-mailcow-api'
 import Imap from 'node-imap'
 import axios, { AxiosProxyConfig } from 'axios'
-import fs, { cp } from 'fs';
+import fs from 'fs';
 import utf8 from 'utf8'
 import qp from 'quoted-printable'
 
 import logger from './logger'
 
+const proxies = fs.readFileSync("proxies.txt").toString().split("\n");
+
 const mailcow = new MailcowClient(process.env.MAILCOW_HOST, process.env.MAILCOW_API_KEY);
 const prisma = new PrismaClient();
 
 if(isMainThread) {
-    const proxies = fs.readFileSync("proxies.txt").toString().split("\n");
     const workers = [];
 
-    for(let i = 0; i < proxies.length; i++) {
+    for(let i = 0; i < process.env.WORKERS; i++) {
         workers.push(new Promise((resolve) => {
             const worker = new Worker('./dist/index.js', {
-                env: {
-                    ...process.env,
-                    PROXY: proxies[i]
-                }
+                env: process.env
             })
     
             worker.on('exit', (code) => {
@@ -37,18 +35,14 @@ if(isMainThread) {
         }))
     }
 
-
     validateMails();
     setInterval(validateMails, 30 * 1000);
 
     Promise.all(workers);
 
     async function validateMails() {
-        logger.info("Checking mails...")
-
         try {
             const mails = await getMails();
-            logger.info("processing mails...");
         
             for await (const mail of mails) {
                 if(mail.header.from.includes('Discord <noreply@discord.com>')) {
@@ -74,14 +68,24 @@ if(isMainThread) {
                         }
                     });
 
+                    const _proxy = proxies[Math.floor(Math.random() * proxies.length)];
+                    const proxy : AxiosProxyConfig = {
+                        host: _proxy.split(":")[0],
+                        port: parseInt(_proxy.split(":")[1]),
+                        auth: {
+                            username: _proxy.split(':')[2],
+                            password: _proxy.split(':')[3]
+                        }
+                    }
+
                     const token = res.request.res.responseUrl.replace('https://discord.com/verify#token=', '');
-                    const captchaKey = await solveCaptcha("f5561ba9-8f1e-40ca-9b5b-a0b3f719ef34", "discord.com");
+                    const captchaKey = await solveCaptcha("f5561ba9-8f1e-40ca-9b5b-a0b3f719ef34", "discord.com", proxy);
 
                     try {
                         res = await axios.post('https://discord.com/api/v9/auth/verify', {
                             captcha_key: captchaKey,
                             token
-                        });
+                        }, { proxy });
                     } catch(err) {
                         logger.error("Failed to verify account :", err);
                         continue;
@@ -89,8 +93,11 @@ if(isMainThread) {
 
                     if(res.data.token) {
                         logger.success("Successfully verified account " + user);
-                        await updateDatabase(user, res.data.userId);
+                        await updateDatabase(user, res.data.user_id);
                         await deleteAlias(user);
+                    } else {
+                        logger.error("Failed to verify account !");
+                        continue;
                     }
                 }
             }      
@@ -121,6 +128,7 @@ if(isMainThread) {
                         try {
                              f = imap.fetch(results, { bodies: ['HEADER.FIELDS (FROM TO SUBJECT)', 'TEXT'], markSeen: true });
                         } catch(err) {
+                            logger.info("no mail to fetch");
                             reject(err);
                             return;
                         }
@@ -165,16 +173,16 @@ if(isMainThread) {
 } else {    
     (async function main() {
         for(let i = 0; i < parseInt(process.env.ACCOUNT_TO_GENERATE); i++) { 
-            const proxy = {
-                host: process.env.PROXY.split(":")[0],
-                port: parseInt(process.env.PROXY.split(':')[1]),
-                auth: {
-                    username: process.env.PROXY.split(':')[2],
-                    password: process.env.PROXY.split(':')[3]
-                }
-            }
+            const proxy = proxies[Math.floor(Math.random() * proxies.length)].split(':');
 
-            await generateAccount(randomString(16), randomString(16), proxy);
+            await generateAccount(randomString(16).toLowerCase(), randomString(16), {
+                host: proxy[0],
+                port: parseInt(proxy[1]),
+                auth: {
+                    username: proxy[2],
+                    password: proxy[3]
+                }
+            });
         }
     })();
 
@@ -207,8 +215,8 @@ if(isMainThread) {
         if(!res.data.fingerprint) {
             while(!res.data.fingerprint && retry <= 5) {
                 logger.error("Failed to get fingerprint ! Retrying...");
-                if(res.data.message == "You are being rate limited.") {
-                    sleep(parseFloat(res.data.retry_after) * 1000);
+                if(res.data.retry_after) {
+                    await sleep(parseFloat(res.data.retry_after) * 1000);
                 } else {
                     await sleep(10000);
                 }
@@ -251,8 +259,8 @@ if(isMainThread) {
         if(!data.token) {
             while(!data.token && retry <= 5) {
                 logger.error("Failed to register account ! Retrying...");
-                if(res.data.message == "You are being rate limited.") {
-                    sleep(parseFloat(res.data.retry_after) * 1000);
+                if(data.retry_after) {
+                    await sleep(parseFloat(data.retry_after) * 1000);
                 } else {
                     await sleep(10000);
                 }

@@ -97,5 +97,5 @@ export async function sleep(ms: number) {
 }
 
 export function fixUnicode(raw: string) : string {
-  return raw.replace('і', 'i').replace('ο', 'o').replace('ѕ', 's')
+  return raw.replace('і', 'i').replace('ο', 'o').replace('ѕ', 's').replace('а', 'a')
 }
